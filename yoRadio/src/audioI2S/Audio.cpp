@@ -1,5 +1,4 @@
 #include "../core/options.h"
-#include "../core/spidog.h"
 #if VS1053_CS==255
 /*
  * Audio.cpp
@@ -25,6 +24,9 @@ fs::SDFATFS SD_SDFAT;
 #endif
 #ifndef DMA_BUFLEN
   #define DMA_BUFLEN  512   //  (512)
+#endif
+#if defined(ESP_ARDUINO_3)
+#include "soc/io_mux_reg.h"
 #endif
 //---------------------------------------------------------------------------------------------------------------------
 AudioBuffer::AudioBuffer(size_t maxBlockSize) {
@@ -688,7 +690,6 @@ bool Audio::connecttoFS(fs::FS &fs, const char* path, uint32_t resumeFilePos) {
 
     AUDIO_INFO("Reading file: \"%s\"", audioName); vTaskDelay(2);
     if(audio_beginSDread) audio_beginSDread();
-    cardLock(true);
     if(fs.exists(audioName)) {
         audiofile = fs.open(audioName); // #86
     }
@@ -698,24 +699,19 @@ bool Audio::connecttoFS(fs::FS &fs, const char* path, uint32_t resumeFilePos) {
             audiofile = fs.open(audioName);
         }
     }
-    cardLock(false);
     if(!audiofile) {
         if(audio_info) {vTaskDelay(2); audio_info("Failed to open file for reading");}
         return false;
     }
-    cardLock(true);
     setDatamode(AUDIO_LOCALFILE);
     m_file_size = audiofile.size();//TEST loop
-    cardLock(false);
     char* afn = NULL;  // audioFileName
-cardLock(true);
 #ifdef SDFATFS_USED
     audiofile.getName(chbuf, sizeof(chbuf));
     afn = strdup(chbuf);
 #else
     afn = strdup(audiofile.name());
 #endif
-cardLock(false);
     uint8_t dotPos = lastIndexOf(afn, ".");
     for(uint8_t i = dotPos + 1; i < strlen(afn); i++){
         afn[i] = toLowerCase(afn[i]);
@@ -751,7 +747,7 @@ cardLock(false);
     bool ret = initializeDecoder();
     if(ret) m_f_running = true;
     else {
-    cardLock(true);audiofile.close();cardLock(false);
+      audiofile.close();
     }
     return ret;
 }
@@ -1769,11 +1765,9 @@ int Audio::read_ID3_Header(uint8_t *data, size_t len) {
             AUDIO_INFO("Audio-Length: %u", m_audioDataSize);
             if(audio_progress) audio_progress(m_audioDataStart, m_audioDataSize);
             if(APIC_seen && audio_id3image){
-                cardLock(true);
                 size_t pos = audiofile.position();
                 audio_id3image(audiofile, APIC_pos, APIC_size);
                 audiofile.seek(pos); // the filepointer could have been changed by the user, set it back
-                cardLock(false);
             }
             return 0;
         }
@@ -2297,13 +2291,13 @@ uint32_t Audio::stopSong() {
         if(getDatamode() == AUDIO_LOCALFILE){
             m_streamType = ST_NONE;
             pos = getFilePos() - inBufferFilled();
-            cardLock(true);audiofile.close();cardLock(false);
+            audiofile.close();
             AUDIO_INFO("Closing audio file");
         }
     }
     if(audiofile){
         // added this before putting 'm_f_localfile = false' in stopSong(); shoulf never occur....
-        cardLock(true);audiofile.close();cardLock(false);
+        audiofile.close();
         AUDIO_INFO("Closing audio file");
         log_w("Closing audio file");  // for debug
     }
@@ -2341,11 +2335,6 @@ bool Audio::pauseResume() {
 bool Audio::playChunk() {
     // If we've got data, try and pump it out..
     int16_t sample[2];
-    /* VU Meter ************************************************************************************************************/
-    /* По мотивам https://github.com/schreibfaul1/ESP32-audioI2S/pull/170/commits/6cce84217e5bc8f2f8925936affc84576932a29b */
-    uint8_t maxl = 0, maxr = 0; 
-    uint8_t minl = 0xFF, minr = 0xFF;
-    /************************************************************************************************************ VU Meter */
     if(getBitsPerSample() == 8) {
         if(getChannels() == 1) {
             while(m_validSamples) {
@@ -2353,19 +2342,11 @@ bool Audio::playChunk() {
                 uint8_t y = (m_outBuff[m_curSample] & 0xFF00) >> 8;
                 sample[LEFTCHANNEL]  = x;
                 sample[RIGHTCHANNEL] = x;
-                if(sample[LEFTCHANNEL] > maxl ) maxl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] > maxr ) maxr = sample[RIGHTCHANNEL];
-                if(sample[LEFTCHANNEL] < minl ) minl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] < minr ) minr = sample[RIGHTCHANNEL];
                 while(1) {
                     if(playSample(sample)) break;
                 } // Can't send?
                 sample[LEFTCHANNEL]  = y;
                 sample[RIGHTCHANNEL] = y;
-                if(sample[LEFTCHANNEL] > maxl ) maxl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] > maxr ) maxr = sample[RIGHTCHANNEL];
-                if(sample[LEFTCHANNEL] < minl ) minl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] < minr ) minr = sample[RIGHTCHANNEL];
                 while(1) {
                     if(playSample(sample)) break;
                 } // Can't send?
@@ -2386,10 +2367,6 @@ bool Audio::playChunk() {
                     sample[LEFTCHANNEL]  = xy;
                     sample[RIGHTCHANNEL] = xy;
                 }
-                if(sample[LEFTCHANNEL] > maxl ) maxl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] > maxr ) maxr = sample[RIGHTCHANNEL];
-                if(sample[LEFTCHANNEL] < minl ) minl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] < minr ) minr = sample[RIGHTCHANNEL];
                 while(1) {
                     if(playSample(sample)) break;
                 } // Can't send?
@@ -2397,8 +2374,6 @@ bool Audio::playChunk() {
                 m_curSample++;
             }
         }
-        vuLeft = maxl - minl;
-        vuRight = maxr - minr;
         m_curSample = 0;
         return true;
     }
@@ -2407,10 +2382,6 @@ bool Audio::playChunk() {
             while(m_validSamples) {
                 sample[LEFTCHANNEL]  = m_outBuff[m_curSample];
                 sample[RIGHTCHANNEL] = m_outBuff[m_curSample];
-                if(sample[LEFTCHANNEL] > maxl ) maxl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] > maxr ) maxr = sample[RIGHTCHANNEL];
-                if(sample[LEFTCHANNEL] < minl ) minl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] < minr ) minr = sample[RIGHTCHANNEL];
                 if(!playSample(sample)) {
                     log_e("can't send");
                     return false;
@@ -2431,17 +2402,11 @@ bool Audio::playChunk() {
                     sample[LEFTCHANNEL] = xy;
                     sample[RIGHTCHANNEL] = xy;
                 }
-                if(sample[LEFTCHANNEL] > maxl ) maxl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] > maxr ) maxr = sample[RIGHTCHANNEL];
-                if(sample[LEFTCHANNEL] < minl ) minl = sample[LEFTCHANNEL];
-                if(sample[RIGHTCHANNEL] < minr ) minr = sample[RIGHTCHANNEL];
                 playSample(sample);
                 m_validSamples--;
                 m_curSample++;
             }
         }
-        vuLeft = maxl - minl;
-        vuRight = maxr - minr;
         m_curSample = 0;
         return true;
     }
@@ -2450,22 +2415,89 @@ bool Audio::playChunk() {
     stopSong();
     return false;
 }
-//---------------------------------------------------------------------------------------------------------------------
 
-void Audio::cardLock(bool lock){
-#if (TFT_CS!=255) || (SDC_CS!=255)
-  if(lock){
-    sdog.takeMutex();
-  }else{
-    sdog.giveMutex();
+/*
+ * Shamelessly borrowed from @schreibfaul1 https://github.com/schreibfaul1/ESP32-audioI2S/blob/1296374fc513a6d6bfaa3b1ca08f6ba938b18d99/src/Audio.cpp#L5030
+ */
+void Audio::_computeVUlevel(int16_t sample[2]) {
+  if(!config.store.vumeter) return;
+  static uint8_t sampleArray[2][4][8] = {0};
+  static uint8_t cnt0 = 0, cnt1 = 0, cnt2 = 0, cnt3 = 0, cnt4 = 0;
+  static bool    f_vu = false;
+
+  auto avg = [&](uint8_t* sampArr) { // lambda, inner function, compute the average of 8 samples
+    uint16_t av = 0;
+    for(int i = 0; i < 8; i++) { av += sampArr[i]; }
+    return av >> 3;
+  };
+
+  auto largest = [&](uint8_t* sampArr) { // lambda, inner function, compute the largest of 8 samples
+    uint16_t maxValue = 0;
+    for(int i = 0; i < 8; i++) {
+      if(maxValue < sampArr[i]) maxValue = sampArr[i];
+    }
+    return maxValue;
+  };
+
+  if(cnt0 == 64) {
+    cnt0 = 0;
+    cnt1++;
   }
-#endif
+  if(cnt1 == 8) {
+    cnt1 = 0;
+    cnt2++;
+  }
+  if(cnt2 == 8) {
+    cnt2 = 0;
+    cnt3++;
+  }
+  if(cnt3 == 8) {
+    cnt3 = 0;
+    cnt4++;
+    f_vu = true;
+  }
+  if(cnt4 == 8) { cnt4 = 0; }
+
+  if(!cnt0) { // store every 64th sample in the array[0]
+    sampleArray[LEFTCHANNEL][0][cnt1] = abs(sample[LEFTCHANNEL] >> 7);
+    sampleArray[RIGHTCHANNEL][0][cnt1] = abs(sample[RIGHTCHANNEL] >> 7);
+  }
+  if(!cnt1) { // store argest from 64 * 8 samples in the array[1]
+    sampleArray[LEFTCHANNEL][1][cnt2] = largest(sampleArray[LEFTCHANNEL][0]);
+    sampleArray[RIGHTCHANNEL][1][cnt2] = largest(sampleArray[RIGHTCHANNEL][0]);
+  }
+  if(!cnt2) { // store avg from 64 * 8 * 8 samples in the array[2]
+    sampleArray[LEFTCHANNEL][2][cnt3] = largest(sampleArray[LEFTCHANNEL][1]);
+    sampleArray[RIGHTCHANNEL][2][cnt3] = largest(sampleArray[RIGHTCHANNEL][1]);
+  }
+  if(!cnt3) { // store avg from 64 * 8 * 8 * 8 samples in the array[3]
+    sampleArray[LEFTCHANNEL][3][cnt4] = avg(sampleArray[LEFTCHANNEL][2]);
+    sampleArray[RIGHTCHANNEL][3][cnt4] = avg(sampleArray[RIGHTCHANNEL][2]);
+  }
+  if(f_vu) {
+    f_vu = false;
+    vuLeft = avg(sampleArray[LEFTCHANNEL][3]);
+    if(vuLeft>config.vuThreshold)  config.vuThreshold = vuLeft;
+    vuRight = avg(sampleArray[RIGHTCHANNEL][3]);
+    if(vuRight>config.vuThreshold) config.vuThreshold = vuRight;
+  }
+  cnt1++;
 }
 
+uint16_t Audio::get_VUlevel(uint16_t dimension){
+  if(!config.store.vumeter || config.vuThreshold==0) return 0;
+  uint8_t L = map(vuLeft, config.vuThreshold, 0, 0, dimension);
+  uint8_t R = map(vuRight, config.vuThreshold, 0, 0, dimension);
+  return (L << 8) | R;
+}
+//---------------------------------------------------------------------------------------------------------------------
+
 void Audio::loop() {
-
-    if(!m_f_running) return;
-
+    if(!m_f_running) {
+      vuLeft=0; vuRight=0;
+      vTaskDelay(2);
+      return;
+    }
     if(m_playlistFormat != FORMAT_M3U8){ // normal process
         switch(getDatamode()){
             case AUDIO_LOCALFILE:
@@ -2961,7 +2993,7 @@ void Audio::processLocalFile() {
         if(m_resumeFilePos){
             if(m_resumeFilePos < m_audioDataStart) m_resumeFilePos = m_audioDataStart;
             if(m_avr_bitrate) m_audioCurrentTime = ((m_resumeFilePos - m_audioDataStart) / m_avr_bitrate) * 8;
-            cardLock(true);audiofile.seek(m_resumeFilePos);cardLock(false);
+            audiofile.seek(m_resumeFilePos);
             InBuff.resetBuffer();
             if(m_f_Log) log_i("m_resumeFilePos %i", m_resumeFilePos);
         }
@@ -2979,7 +3011,7 @@ void Audio::processLocalFile() {
     }
     //----------------------------------------------------------------------------------------------------
 
-    cardLock(true); bytesAddedToBuffer = audiofile.read(InBuff.getWritePtr(), bytesCanBeWritten); cardLock(false);
+    bytesAddedToBuffer = audiofile.read(InBuff.getWritePtr(), bytesCanBeWritten);
     if(bytesAddedToBuffer > 0) {
         InBuff.bytesWritten(bytesAddedToBuffer);
     }
@@ -3032,14 +3064,12 @@ void Audio::processLocalFile() {
         } //TEST loop
         f_stream = false;
         m_streamType = ST_NONE;
-cardLock(true);
 #ifdef SDFATFS_USED
         audiofile.getName(chbuf, sizeof(chbuf));
         char *afn =strdup(chbuf);
 #else
         char *afn =strdup(audiofile.name()); // store temporary the name
 #endif
-cardLock(false);
         stopSong();
         if(m_codec == CODEC_MP3)   MP3Decoder_FreeBuffers();
         if(m_codec == CODEC_AAC)   AACDecoder_FreeBuffers();
@@ -4382,32 +4412,26 @@ void Audio::printDecodeError(int r) {
 }
 //---------------------------------------------------------------------------------------------------------------------
 bool Audio::setPinout(uint8_t BCLK, uint8_t LRC, uint8_t DOUT, int8_t DIN, int8_t MCK) {
-
     m_pin_config.bck_io_num   = BCLK;
     m_pin_config.ws_io_num    = LRC; //  wclk
     m_pin_config.data_out_num = DOUT;
     m_pin_config.data_in_num  = DIN;
-#if(ESP_IDF_VERSION_MAJOR >= 4 && ESP_IDF_VERSION_MINOR >= 4)
+#if(ESP_IDF_VERSION_MAJOR >= 4 && ESP_IDF_VERSION_MINOR >= 4) || defined(ESP_ARDUINO_3)
     m_pin_config.mck_io_num   = MCK;
 #endif
-
     const esp_err_t result = i2s_set_pin((i2s_port_t) m_i2s_num, &m_pin_config);
     return (result == ESP_OK);
 }
 //---------------------------------------------------------------------------------------------------------------------
 uint32_t Audio::getFileSize() {
     if(!audiofile) return 0;
-    cardLock(true);
     uint32_t s = audiofile.size();
-    cardLock(false);
     return s;
 }
 //---------------------------------------------------------------------------------------------------------------------
 uint32_t Audio::getFilePos() {
     if(!audiofile) return 0;
-    cardLock(true);
     uint32_t p = audiofile.position();
-    cardLock(false);
     return p;
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -4483,9 +4507,7 @@ bool Audio::setFilePos(uint32_t pos) {
     InBuff.resetBuffer();
     if(pos < m_audioDataStart) pos = m_audioDataStart; // issue #96
     if(m_avr_bitrate) m_audioCurrentTime = ((pos-m_audioDataStart) / m_avr_bitrate) * 8; // #96
-    cardLock(true);
     uint32_t sk = audiofile.seek(pos);
-    cardLock(false);
     return sk;
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -4588,7 +4610,7 @@ bool Audio::playSample(int16_t sample[2]) {
     sample = IIR_filterChain1(sample);
     sample = IIR_filterChain2(sample);
     //-------------------------------------------
-
+    _computeVUlevel(sample);
     uint32_t s32 = Gain(sample); // vosample2lume;
 
     if(m_f_internalDAC) {
@@ -4711,7 +4733,7 @@ void Audio::IIR_calculateCoefficients(int8_t G0, int8_t G1, int8_t G2){  // Infi
     if(G2 < -40) G2 = -40;
     if(G2 > 6) G2 = 6;
 
-    const float FcLS   =  500;  // Frequency LowShelf[Hz]
+    const float FcLS   =   80;  // Frequency LowShelf[Hz] //500
     const float FcPKEQ = 3000;  // Frequency PeakEQ[Hz]
     const float FcHS   = 6000;  // Frequency HighShelf[Hz]
 

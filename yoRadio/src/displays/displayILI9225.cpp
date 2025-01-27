@@ -6,13 +6,9 @@
 #include "fonts/bootlogo.h"
 #include "../core/config.h"
 #include "../core/network.h"
-#include "../core/spidog.h"
 
 extern unsigned char yofont5x7[];
 extern unsigned char yofont10x14[];
-
-#define TAKE_MUTEX() sdog.takeMutex()
-#define GIVE_MUTEX() sdog.giveMutex()
 
 DspCore::DspCore(): TFT_22_ILI9225(TFT_RST, TFT_DC, TFT_CS, 0) {}
 
@@ -40,13 +36,10 @@ void DspCore::setCursor(int16_t x, int16_t y){
 uint16_t DspCore::print(const char* s){
   
   if(_gFont){
-    TAKE_MUTEX();
     drawGFXText(_cursorx, _cursory, s, _fgcolor);
-    GIVE_MUTEX();
     return 0;
   }else{
     _cursorx=drawText(_cursorx, _cursory, s, _fgcolor);
-    //GIVE_MUTEX();
     return _cursorx;
   }
 }
@@ -70,31 +63,22 @@ void DspCore::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t colo
     h=h+y;
     y=0;
   }
-  TAKE_MUTEX();
   fillRectangle(x, y, x+w, y+h, color);
-  GIVE_MUTEX();
 }
 
 void DspCore::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color){
-  TAKE_MUTEX();
   drawRectangle(x, y, x+w, y+h, color); 
-  GIVE_MUTEX();
 }
 
 void DspCore::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color){
-  TAKE_MUTEX();
   drawLine(x, y, x, y+h, color);
-  GIVE_MUTEX();
 }
 
 void DspCore::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color){
-  TAKE_MUTEX();
   drawLine(x, y, x+w, y, color);
-  GIVE_MUTEX();
 }
       
 void DspCore::initDisplay() {
-//  TAKE_MUTEX();
 #if DSP_HSPI
   begin(SPI2);
 #else
@@ -103,7 +87,6 @@ void DspCore::initDisplay() {
   invert();
   flip();
   setTextSize(1);
-//  GIVE_MUTEX();
   plItemHeight = playlistConf.widget.textsize*(CHARHEIGHT-1)+playlistConf.widget.textsize*4;
   plTtemsCount = round((float)height()/plItemHeight);
   if(plTtemsCount%2==0) plTtemsCount++;
@@ -112,9 +95,7 @@ void DspCore::initDisplay() {
 }
 
 void DspCore::drawLogo(uint16_t top) {
-  TAKE_MUTEX();
   drawBitmap((width() - 99) / 2, top, bootlogo2, 99, 64);
-  GIVE_MUTEX();
 }
 
 void DspCore::printPLitem(uint8_t pos, const char* item, ScrollWidget& current){
@@ -138,9 +119,7 @@ void DspCore::drawPlaylist(uint16_t currentItem) {
 }
 
 void DspCore::clearDsp(bool black) {
-  TAKE_MUTEX();
   clear(black?0x0000:config.theme.background);
-  GIVE_MUTEX();
 }
 
 GFXglyph *pgm_read_glyph_ptr(const GFXfont *gfxFont, uint8_t c) {
@@ -170,7 +149,7 @@ void DspCore::_clockSeconds(){
   setTextColor(config.theme.seconds, config.theme.background);
   setCursor(width() - 8 - clockRightSpace - CHARWIDTH*2*2, clockTop-clockTimeHeight+1);
   sprintf(_bufforseconds, "%02d", network.timeinfo.tm_sec);
-  print(_bufforseconds);                                      /* print seconds */
+  if(!config.isScreensaver) print(_bufforseconds);                                      /* print seconds */
 }
 
 void DspCore::_clockDate(){
@@ -178,7 +157,7 @@ void DspCore::_clockDate(){
     fillRect(_olddateleft,  clockTop+10, _olddatewidth, CHARHEIGHT, config.theme.background);
   setTextColor(config.theme.date, config.theme.background);
   setCursor(_dateleft, clockTop+10);
-  print(_dateBuf);                                            /* print date */
+  if(!config.isScreensaver) print(_dateBuf);                                            /* print date */
   strlcpy(_oldDateBuf, _dateBuf, sizeof(_dateBuf));
   _olddatewidth = _datewidth;
   _olddateleft = _dateleft;
@@ -206,8 +185,8 @@ void DspCore::_clockTime(){
   strlcpy(_oldTimeBuf, _timeBuf, sizeof(_timeBuf));
   _oldtimewidth = _timewidth;
   _oldtimeleft = _timeleft;
-  drawFastVLine(width()-clockRightSpace-CHARWIDTH*2*2-18, clockTop-clockTimeHeight, clockTimeHeight+3, config.theme.div);  /*divider vert*/
-  drawFastHLine(width()-clockRightSpace-CHARWIDTH*2*2-18, clockTop-clockTimeHeight+21, 32, config.theme.div);              /*divider hor*/
+  if(!config.isScreensaver) drawFastVLine(width()-clockRightSpace-CHARWIDTH*2*2-18, clockTop-clockTimeHeight, clockTimeHeight+3, config.theme.div);  /*divider vert*/
+  if(!config.isScreensaver) drawFastHLine(width()-clockRightSpace-CHARWIDTH*2*2-18, clockTop-clockTimeHeight+21, 32, config.theme.div);              /*divider hor*/
   sprintf(_buffordate, "%2d %s %d", network.timeinfo.tm_mday,mnths[network.timeinfo.tm_mon], network.timeinfo.tm_year+1900);
   strlcpy(_dateBuf, utf8Rus(_buffordate, true), sizeof(_dateBuf));
   _datewidth = strlen(_dateBuf) * CHARWIDTH;
@@ -222,7 +201,8 @@ void DspCore::printClock(uint16_t top, uint16_t rightspace, uint16_t timeheight,
   if(strcmp(_oldTimeBuf, _timeBuf)!=0 || redraw){
     _getTimeBounds();
     _clockTime();
-    if(strcmp(_oldDateBuf, _dateBuf)!=0 || redraw) _clockDate();
+    if(!config.isScreensaver) 
+      if(strcmp(_oldDateBuf, _dateBuf)!=0 || redraw) _clockDate();
   }
   _clockSeconds();
 }
@@ -232,13 +212,11 @@ void DspCore::clearClock(){
 }
 
 void DspCore::startWrite(void) {
-  //TAKE_MUTEX();
   TFT_22_ILI9225::startWrite();
 }
 
 void DspCore::endWrite(void) {
   TFT_22_ILI9225::endWrite();
-  //GIVE_MUTEX();
 }
 
 void DspCore::loop(bool force) { 
@@ -251,24 +229,18 @@ void DspCore::charSize(uint8_t textsize, uint8_t& width, uint16_t& height){
 }
 
 void DspCore::drawRGBBitmap(int16_t x, int16_t y, const uint16_t *bitmap, int16_t w, int16_t h) {
-  TAKE_MUTEX();
   drawBitmap(x, y, bitmap, w, h);
-  GIVE_MUTEX();
 }
 
 void DspCore::flip(){
-  TAKE_MUTEX();
   setOrientation(config.store.flipscreen?3:1);
-  GIVE_MUTEX();
 }
 void DspCore::invert(){
-  TAKE_MUTEX();
   invertDisplay(config.store.invertdisplay);
-  GIVE_MUTEX();
 }
 
-void DspCore::sleep(void) { TAKE_MUTEX(); setDisplay(false); GIVE_MUTEX(); }
-void DspCore::wake(void) { TAKE_MUTEX(); setDisplay(true); GIVE_MUTEX(); }
+void DspCore::sleep(void) { setDisplay(false); }
+void DspCore::wake(void) { setDisplay(true); }
 
 void DspCore::writePixel(int16_t x, int16_t y, uint16_t color) { }
 
@@ -280,9 +252,7 @@ uint16_t DspCore::drawChar(uint16_t x, uint16_t y, uint16_t ch, uint16_t color) 
       return cfont.width;
     }
   }
-  TAKE_MUTEX();
   uint16_t ret=TFT_22_ILI9225::drawChar(x, y, ch, color);
-  GIVE_MUTEX();
   return ret;
 }
 

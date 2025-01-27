@@ -49,13 +49,13 @@ constexpr uint8_t nrOfButtons = sizeof(button) / sizeof(button[0]);
 
 #if IR_PIN!=255
 #include <assert.h>
-#include <IRrecv.h>
-#include <IRremoteESP8266.h>
-#include <IRac.h>
-#include <IRtext.h>
-#include <IRutils.h>
 
-byte irVolRepeat = 0;
+#include "../IRremoteESP8266/IRrecv.h"
+#include "../IRremoteESP8266/IRremoteESP8266.h"
+#include "../IRremoteESP8266/IRac.h"
+#include "../IRremoteESP8266/IRtext.h"
+#include "../IRremoteESP8266/IRutils.h"
+uint8_t irVolRepeat = 0;
 const uint16_t kCaptureBufferSize = 1024;
 const uint8_t kTimeout = IR_TIMEOUT;
 const uint16_t kMinUnknownSize = 12;
@@ -180,6 +180,10 @@ void encodersLoop(yoEncoder *enc, bool first){
       controlsEvent(encoderDelta > 0, encoderDelta);
     }else{
       if (encBtnState == HIGH && display.mode() == PLAYER) {
+        if(config.store.skipPlaylistUpDown){
+          if(encoderDelta > 0) player.next(); else player.prev();
+          return;
+        }
         display.putRequest(NEWMODE, STATIONS);
         while(display.mode() != STATIONS) {delay(10);}
       }
@@ -204,16 +208,16 @@ void encoder2Loop() {
 
 #if IR_PIN!=255
 void irBlink() {
-  if(LED_BUILTIN==255) return;
+  if(REAL_LEDBUILTIN==255) return;
   if (player.status() == STOPPED) {
-    for (byte i = 0; i < 7; i++) {
-      digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    for (uint8_t i = 0; i < 7; i++) {
+      digitalWrite(REAL_LEDBUILTIN, !digitalRead(REAL_LEDBUILTIN));
       delay(100);
     }
   }
 }
 
-void irNum(byte num) {
+void irNumber(uint8_t num) {
   uint16_t s;
   if (display.numOfNextStation == 0 && num == 0) return;
   display.putRequest(NEWMODE, NUMBERS);
@@ -252,6 +256,10 @@ void irLoop() {
         if(config.ircodes.irVals[target][j]==irResults.value){
           if (network.status != CONNECTED && network.status!=SDREADY && target!=IR_AST) return;
           if(target!=IR_AST && display.mode()==LOST) return;
+          if (display.mode() == SCREENSAVER || display.mode() == SCREENBLANK) {
+            display.putRequest(NEWMODE, PLAYER);
+            return;
+          }
           switch (target){
             case IR_PLAY: {
                 irBlink();
@@ -292,43 +300,43 @@ void irLoop() {
                 break;
               }
             case IR_0: {
-                irNum(0);
+                irNumber(0);
                 break;
               }
             case IR_1: {
-                irNum(1);
+                irNumber(1);
                 break;
               }
             case IR_2: {
-                irNum(2);
+                irNumber(2);
                 break;
               }
             case IR_3: {
-                irNum(3);
+                irNumber(3);
                 break;
               }
             case IR_4: {
-                irNum(4);
+                irNumber(4);
                 break;
               }
             case IR_5: {
-                irNum(5);
+                irNumber(5);
                 break;
               }
             case IR_6: {
-                irNum(6);
+                irNumber(6);
                 break;
               }
             case IR_7: {
-                irNum(7);
+                irNumber(7);
                 break;
               }
             case IR_8: {
-                irNum(8);
+                irNumber(8);
                 break;
               }
             case IR_9: {
-                irNum(9);
+                irNumber(9);
                 break;
               }
             case IR_AST: {
@@ -465,8 +473,10 @@ void controlsEvent(bool toRight, int8_t volDelta) {
 
 void onBtnClick(int id) {
   bool passBnCenter = (controlEvt_e)id==EVT_BTNCENTER || (controlEvt_e)id==EVT_ENCBTNB || (controlEvt_e)id==EVT_ENC2BTNB;
+  controlEvt_e btnid = static_cast<controlEvt_e>(id);
+  pm.on_btn_click(btnid);
   if (network.status != CONNECTED && network.status!=SDREADY && (controlEvt_e)id!=EVT_BTNMODE && !passBnCenter) return;
-  switch ((controlEvt_e)id) {
+  switch (btnid) {
     case EVT_BTNLEFT: {
         controlsEvent(false);
         break;
@@ -480,6 +490,12 @@ void onBtnClick(int id) {
         }
         if (display.mode() == PLAYER) {
           player.toggle();
+        }
+        if (display.mode() == SCREENSAVER || display.mode() == SCREENBLANK) {
+          display.putRequest(NEWMODE, PLAYER);
+          #ifdef DSP_LCD
+            delay(200);
+          #endif
         }
         if (display.mode() == STATIONS) {
           display.putRequest(NEWMODE, PLAYER);
@@ -509,7 +525,15 @@ void onBtnClick(int id) {
           }
         } else {
           if (display.mode() == PLAYER) {
-            display.putRequest(NEWMODE, STATIONS);
+            if(config.store.skipPlaylistUpDown || ENC2_BTNL!=255){
+              if (id == EVT_BTNUP) {
+                player.prev();
+              } else {
+                player.next();
+              }
+            }else{
+              display.putRequest(NEWMODE, STATIONS);
+            }
           }
           if (display.mode() == STATIONS) {
             controlsEvent(id == EVT_BTNDOWN);
@@ -528,6 +552,10 @@ void onBtnClick(int id) {
 }
 
 void onBtnDoubleClick(int id) {
+  if (display.mode() == SCREENSAVER || display.mode() == SCREENBLANK) {
+    display.putRequest(NEWMODE, PLAYER);
+    return;
+  }
   switch ((controlEvt_e)id) {
     case EVT_BTNLEFT: {
         if (display.mode() != PLAYER) return;
@@ -553,15 +581,13 @@ void onBtnDoubleClick(int id) {
   }
 }
 void setIRTolerance(uint8_t tl){
-  config.store.irtlp=tl;
-  config.save();
+  config.saveValue(&config.store.irtlp, tl);
 #if IR_PIN!=255
   irrecv.setTolerance(config.store.irtlp);
 #endif
 }
 void setEncAcceleration(uint16_t acc){
-  config.store.encacc=acc;
-  config.save();
+  config.saveValue(&config.store.encacc, acc);
 #if ENC_BTNL!=255
   encoder.setAcceleration(config.store.encacc);
 #endif

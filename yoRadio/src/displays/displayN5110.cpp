@@ -3,15 +3,11 @@
 
 #include "displayN5110.h"
 #include <Wire.h>
-#include "../core/spidog.h"
 #include "../core/config.h"
 #include "../core/network.h"
 
 #define LOGO_WIDTH 21
 #define LOGO_HEIGHT 28
-
-#define TAKE_MUTEX() sdog.takeMutex()
-#define GIVE_MUTEX() sdog.giveMutex()
 
 const unsigned char logo [] PROGMEM=
 {
@@ -32,15 +28,11 @@ DspCore::DspCore(): Adafruit_PCD8544(TFT_DC, TFT_CS, TFT_RST) {}
 #include "tools/utf8RusGFX.h"
 
 void DspCore::command(uint8_t c) {
-  TAKE_MUTEX();
   Adafruit_PCD8544::command(c);
-  GIVE_MUTEX();
 }
 
 void DspCore::data(uint8_t c) {
-  TAKE_MUTEX();
   Adafruit_PCD8544::data(c);
-  GIVE_MUTEX();
 }
 
 void DspCore::initDisplay() {
@@ -174,7 +166,7 @@ void DspCore::printClock(uint16_t top, uint16_t rightspace, uint16_t timeheight,
 }
 
 void DspCore::clearClock(){
-  dsp.fillRect(_timeleft,  clockTop-clockTimeHeight, _timewidth+CHARWIDTH*2+2, clockTimeHeight, config.theme.background);
+  dsp.fillRect(_timeleft,  clockTop-clockTimeHeight, _timewidth+CHARWIDTH*2+2, clockTimeHeight+2, config.theme.background);
   //dsp.fillRect(_timeleft,  clockTop-clockTimeHeight, _timewidth+CHARWIDTH*3*2+24, clockTimeHeight+10+CHARHEIGHT, config.theme.background);
 }
 

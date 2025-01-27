@@ -141,10 +141,11 @@ Rotation of the display:
 
 ---
 ## Quick start
-<img src="images/board3.jpg" width="830" height="400"><br />
+<img src="images/board4.jpg" width="830" height="473"><br />
 
 - <span style="color: red; font-weight: bold; font-size: 22px;text-decoration: underline;">Arduino IDE version 2.x.x is not supported. Use Arduino IDE 1.8.19</span>
 - <span style="color: red; font-weight: bold; font-size: 22px;text-decoration: underline;">ESP32 core version 2.0.0 or higher is [required](https://github.com/espressif/arduino-esp32)!</span>
+
 1. Generate a myoptions.h file for your hardware configuration using [this tool](https://e2002.github.io/docs/myoptions-generator.html).
 2. Put myoptions.h file next to yoRadio.ino.
 3. Replace file Arduino/libraries/Adafruit_GFX_Library/glcdfont.c with file [yoRadio/fonts/glcdfont.c](yoRadio/fonts/glcdfont.c)
@@ -224,11 +225,118 @@ download _http://\<yoradioip\>/data/playlist.csv_ and _http://\<yoradioip\>/data
 
 ---
 ## Plugins
-There is no documentation yet, you will have to deal with the examples, which is in directory [examples/plugins/](https://github.com/e2002/yoradio/tree/main/examples/plugins).\
+The `Plugin` class serves as a base class for creating plugins that hook into various system events.  
+To use it, inherit from `Plugin` and override the necessary virtual methods.  
+Place your new class in the `src/plugins/<MyPlugin>` directory
+More details can be found in the comments within the `yoRadio/src/pluginsManager/pluginsManager.h` file and at [here](https://github.com/e2002/yoradio/blob/main/yoRadio/src/pluginsManager/README.md).  
+Additional examples are provided in the `examples/plugins` folder.
 Work is in progress...
 
 ---
 ## Version history
+### 0.9.434
+- fixed the issue with exiting Screensaver Blank Screen mode via button presses and IR commands.
+- reduced the minimum frequency for tone control on I2S modules to 80Hz.
+- increased the display update task delay to 10 TICKS.
+  to revert to the previous setting, add `#define DSP_TASK_DELAY 2` to `myoptions.h`.
+- when ENCODER2 is connected, the UP and DOWN buttons now work as PREV and NEXT (single click).
+- implemented backlight off in Screensaver Blank Screen mode.
+
+### 0.9.428
+- fixed freezing after SD scanning during playback
+- AsyncWebSocket queue increased to 128
+- fixed VU meter  overlapping the clock on displays
+- fixed Guru Meditation error when loading in SD mode with SD card removed
+
+### 0.9.420
+**!!! a [full update](#update-over-web-interface) with Sketch data upload is required. After updating please press CTRL+F5 in browser !!!**
+- added screensaver mode during playback, configurable via the web interface, pull request[#129](https://github.com/e2002/yoradio/pull/129)
+- added blank screen mode to screensaver, configurable via the web interface, pull request[#129](https://github.com/e2002/yoradio/pull/129)
+  Thanks to @trip5 for the amazing code!
+- speeding up indexing of SD cards (advice - don't put all files in one folder)
+- i don't remember (honestly) why the AsyncTCP server worked on the same core with the player, now it works on the same core with the display
+  `#define CONFIG_ASYNC_TCP_RUNNING_CORE 0`
+- bug fixes
+
+### v0.9.412
+**!!! a [full update](#update-over-web-interface) with Sketch data upload is required. After updating please press CTRL+F5 in browser !!!**
+- added mDNS support, configurable via the web interface, pull[#125](https://github.com/e2002/yoradio/pull/125)
+- added a setting that allows you to switch stations with the UP and DOWN buttons immediately, bypassing the playlist, configurable via the web interface, pull[#125](https://github.com/e2002/yoradio/pull/125)
+
+### v0.9.399
+**!!! a [full update](#update-over-web-interface) with Sketch data upload is required. After updating please press CTRL+F5 in browser !!!**
+- added a screensaver mode, configurable via the web interface.
+- changes to the tone control algorithm for the VS1053.
+
+### v0.9.390
+- updated the VU meter algorithms - shamelessly borrowed from @schreibfaul1, ([thanks a lot!](https://github.com/schreibfaul1/ESP32-audioI2S/blob/1296374fc513a6d6bfaa3b1ca08f6ba938b18d99/src/Audio.cpp#L5030))
+- fixed the magic error "HSPI" redefined.
+
+### v0.9.380
+- fixed compilation error for ESP32 cores >= 3.1.0
+- fixed freezing error with incorrectly configured RTC module
+- [www|uart|telnet] new command `mode` - change SD/WEB mode. (0 - WEB, 1 - SD, 2 - Toggle)
+  example: http://\<ipaddress\>/?mode=2
+
+#### v0.9.375
+- fixed the issue with saving settings for TIMEZONE.
+
+### v0.9.373
+- fixed the issue with displaying the settings page on fresh ESP modules after saving the weather key
+ (a [reset](https://github.com/e2002/yoradio/wiki/List-of-available-commands-(UART-telnet-GET-POST)) may be required)
+
+#### v0.9.370
+- fixed the issue with saving settings on fresh ESP modules.
+
+#### v0.9.369
+- fixed the issue with the non-functional HSPI bus
+
+#### v0.9.368
+- SD Card - optimization and bug fixes
+- Config - improvements and bug fixes
+- Added stream format display in the web interface **!!! A full update is required, including SPIFFS Data !!!**  
+  *(Alternatively, upload the new `style.css.gz` and `script.js.gz` files via the web interface.)*
+- The content of `yoRadio.ino` has been moved to `src/main.cpp`
+- [www|uart|telnet] new command: `reset` - resets settings to default values. [More details](https://github.com/e2002/yoradio/wiki/List-of-available-commands-(UART-telnet-GET-POST))
+- Fixed compilation error: `'ets_printf' was not declared in this scope`
+
+#### v0.9.351
+- fixed freezing when loading without plugins in some configurations "running dots"
+
+#### v0.9.350
+- **Added parameters for configuring `LED_BUILTIN` on ESP32S3 modules:**
+  - `USE_BUILTIN_LED`: Determines whether to use the built-in `LED_BUILTIN` (default is `true`).
+  - `LED_BUILTIN_S3`: Specifies a custom pin for the built-in `LED_BUILTIN`. Used in combination with `USE_BUILTIN_LED = false` (default is `255`).
+
+  **Note:** For ESP32S3 boards, no changes are required by default; the onboard LED will work as expected.  
+  These settings were added to allow disabling the built-in LED or reassigning it to a custom pin.
+
+- **New class for plugin management**, enabling multiple plugins to be assigned to each function.  
+  More details can be found in the comments within the `yoRadio/src/pluginsManager/pluginsManager.h` file and at [here](https://github.com/e2002/yoradio/blob/main/yoRadio/src/pluginsManager/README.md).  
+  Additional examples are provided in the `examples/plugins` folder.
+  **Backward compatibility:** The old method of adding plugins will remain functional for some time in future versions but will eventually be deprecated and removed.
+
+#### v0.9.342b
+- fixed compilation error for OLED displays
+
+#### v0.9.340b
+- fixed compilation error audioVS1053Ex.cpp:181:5: error: 'sdog' was not declared in this scope
+
+#### v0.9.337b (homeassistant component)
+- fixed the error of subscribing to mqtt topic on some systems
+
+#### v0.9.337b
+- added support for Arduino ESP32 v3.0.0 and later
+- disabled SD indexing on startup; now the card is indexed only if the `data/index.dat` file is missing from the card
+- IRremoteESP8266 library integrated into the project (`yoRadio/src/IRremoteESP8266`)
+
+#### v0.9.313b
+- added support for ESP32-S3 boards (ESP32 S3 Dev Module) (esp32 cores version 3.x.x is not supported yet)
+- fixes in displaying sliders in the web interface
+
+#### v0.9.300 (homeassistant component)
+- HA component >> bug fixes in the component for newer versions of Home Assistant
+
 #### v0.9.300
 - added the ability to play SDCARD without an Internet connection. More in [Wiki](https://github.com/e2002/yoradio/wiki/A-little-about-SD-CARD-and-RTC)
 

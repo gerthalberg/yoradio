@@ -1,5 +1,4 @@
 #include "../core/options.h"
-#include "../core/spidog.h"
 #if I2S_DOUT==255
 /*
  *  vs1053_ext.cpp
@@ -143,12 +142,11 @@ uint32_t AudioBuffer::getReadPos() {
 //---------------------------------------------------------------------------------------------------------------------
 // **** VS1053 Impl ****
 //---------------------------------------------------------------------------------------------------------------------
-Audio::Audio(uint8_t _cs_pin, uint8_t _dcs_pin, uint8_t _dreq_pin, uint8_t spi, uint8_t mosi, uint8_t miso, uint8_t sclk) :
+Audio::Audio(uint8_t _cs_pin, uint8_t _dcs_pin, uint8_t _dreq_pin, SPIClass *spi) :
         cs_pin(_cs_pin), dcs_pin(_dcs_pin), dreq_pin(_dreq_pin)
 {
-    spi_VS1053 = new SPIClass(spi);
-    spi_VS1053->begin(sclk, miso, mosi, -1);
-
+    spi_VS1053 = spi;
+    spi_VS1053->begin();
     clientsecure.setInsecure();                 // update to ESP32 Arduino version 1.0.5-rc05 or higher
     m_endFillByte=0;
     curvol=50;
@@ -180,18 +178,15 @@ void Audio::control_mode_off()
 {
     CS_HIGH();                                     // End control mode
     spi_VS1053->endTransaction();                  // Allow other SPI users
-    sdog.giveMutex();
 }
 void Audio::control_mode_on()
 {
-    sdog.takeMutex();
     spi_VS1053->beginTransaction(VS1053_SPI_CTL);   // Prevent other SPI users
     DCS_HIGH();                                     // Bring slave in control mode
     CS_LOW();
 }
 void Audio::data_mode_on()
 {
-    sdog.takeMutex();
     spi_VS1053->beginTransaction(VS1053_SPI_DATA);  // Prevent other SPI users
     CS_HIGH();                                      // Bring slave in data mode
     DCS_LOW();
@@ -201,7 +196,6 @@ void Audio::data_mode_off()
     //digitalWrite(dcs_pin, HIGH);              // End data mode
     DCS_HIGH();
     spi_VS1053->endTransaction();                       // Allow other SPI users
-    sdog.giveMutex();
 }
 //---------------------------------------------------------------------------------------------------------------------
 uint16_t Audio::read_register(uint8_t _reg)
@@ -346,26 +340,26 @@ void Audio::setVolume(uint8_t vol){
     // Input value is 0..21.  21 is the loudest.
     // Clicking reduced by using 0xf8 to 0x00 as limits.
     uint16_t value;                                         // Value to send to SCI_VOL
-		uint8_t valueL, valueR;
-		int16_t balance_map = map(m_balance, -16, 16, -100, 100);
-		
-		valueL = vol;
+    uint8_t valueL, valueR;
+    int16_t balance_map = map(m_balance, -16, 16, -100, 100);
+    
+    valueL = vol;
     valueR = vol;
     if (balance_map < 0) {
         valueR = (float)valueR-(float)valueR * abs((float)balance_map)/100;
     } else if (balance_map > 0) {
-    		valueL = (float)valueL-(float)valueL * abs((float)balance_map)/100;
+        valueL = (float)valueL-(float)valueL * abs((float)balance_map)/100;
     }
     curvol = vol;
 
-		uint8_t lgvolL = VS1053VOL(valueL);
-		uint8_t lgvolR = VS1053VOL(valueR);
-		if(lgvolL==VS1053VOLM) lgvolL=0;
-		if(lgvolR==VS1053VOLM) lgvolR=0;
-		valueL=map(lgvolL, 0, 254, 0xF8, 0x00);
-		valueR=map(lgvolR, 0, 254, 0xF8, 0x00);
-		value=(valueL << 8) | valueR;
-		write_register(SCI_VOL, value);
+    uint8_t lgvolL = VS1053VOL(valueL);
+    uint8_t lgvolR = VS1053VOL(valueR);
+    if(lgvolL==VS1053VOLM) lgvolL=0;
+    if(lgvolR==VS1053VOLM) lgvolR=0;
+    valueL=map(lgvolL, 0, 254, 0xF8, 0x00);
+    valueR=map(lgvolR, 0, 254, 0xF8, 0x00);
+    value=(valueL << 8) | valueR;
+    write_register(SCI_VOL, value);
 /*    uint16_t value;                                         // Value to send to SCI_VOL
 
     if(vol > 21) vol=21;
@@ -392,23 +386,39 @@ void Audio::setTone(int8_t *rtone){                       // Set bass/treble (4 
     write_register(SCI_BASS, value);                        // Volume left and right
 }
 /*
-Name						Bits			Description
-ST AMPLITUDE		15:12			Treble Control in 1.5 dB steps (-8..7, 0 = off)
-ST FREQLIMIT		11:8			Lower limit frequency in 1000 Hz steps (1..15) 			// 1000..15000
-SB AMPLITUDE		7:4				Bass Enhancement in 1 dB steps (0..15, 0 = off)
-SB FREQLIMIT		3:0				Lower limit frequency in 10 Hz steps (2..15)				// 20..150
+Name            Bits      Description
+ST AMPLITUDE    15:12      Treble Control in 1.5 dB steps (-8..7, 0 = off)
+ST FREQLIMIT    11:8      Lower limit frequency in 1000 Hz steps (1..15)       // 1000..15000
+SB AMPLITUDE    7:4        Bass Enhancement in 1 dB steps (0..15, 0 = off)
+SB FREQLIMIT    3:0        Lower limit frequency in 10 Hz steps (2..15)        // 20..150
+*/
+/*
+void Audio::setTone(int8_t gainLowPass, int8_t gainBandPass, int8_t gainHighPass){ 
+  if(gainLowPass<0) gainLowPass=0;
+  if(gainLowPass>15) gainLowPass=15;
+  if(gainBandPass<0) gainBandPass=0;
+  if(gainBandPass>13) gainBandPass=13;
+  int8_t rtone[] = {(int8_t)map(gainHighPass, -16, 16, -8, 7), (int8_t)(2+gainBandPass), gainLowPass, (int8_t)(15-gainBandPass)};
+  setTone(rtone);
+}
 */
 void Audio::setTone(int8_t gainLowPass, int8_t gainBandPass, int8_t gainHighPass){ 
-	if(gainLowPass<0) gainLowPass=0;
-	if(gainLowPass>15) gainLowPass=15;
-	if(gainBandPass<0) gainBandPass=0;
-	if(gainBandPass>13) gainBandPass=13;
-	int8_t rtone[] = {(int8_t)map(gainHighPass, -16, 16, -8, 7), (int8_t)(2+gainBandPass), gainLowPass, (int8_t)(15-gainBandPass)};
-	setTone(rtone);
+  gainHighPass = constrain(gainHighPass, -16, 16);
+  gainBandPass = constrain(gainBandPass, -16, 16);
+  gainLowPass = constrain(gainLowPass, -16, 16);
+
+  uint8_t trebleFreqLimit = map(-gainBandPass, -16, 16, 1, 15);
+  uint8_t bassFreqLimit = map(gainBandPass, -16, 16, 2, 15);
+  uint8_t st_amplitude = map(gainHighPass, -16, 16, -8, 7);
+  uint8_t sb_amplitude = map(gainLowPass, -16, 16, 0, 15);
+  uint16_t sci_bass = (st_amplitude << 12) | (trebleFreqLimit << 8) |
+                      (sb_amplitude << 4) | bassFreqLimit;
+  write_register(SCI_BASS, sci_bass);
 }
+
 void Audio::setBalance(int8_t bal){ 
-	m_balance = bal;
-	setVolume(curvol);
+  m_balance = bal;
+  setVolume(curvol);
 }
 //---------------------------------------------------------------------------------------------------------------------
 uint8_t Audio::getVolume()                                 // Get the currenet volume setting.
@@ -425,9 +435,9 @@ void Audio::stopSong()
 {
     uint16_t modereg;                                       // Read from mode register
     int i;                                                  // Loop control
-		if(audiofile){
-			cardLock(true);audiofile.close();cardLock(false);
-		}
+    if(audiofile){
+      audiofile.close();
+    }
     m_f_localfile = false;
     m_f_webfile = false;
     m_f_webstream = false;
@@ -570,16 +580,7 @@ void Audio::showstreamtitle(const char* ml) {
         }
     }
 }
-//---------------------------------------------------------------------------------------------------------------------
-void Audio::cardLock(bool lock){
-#if (SDC_CS!=255)
-  if(lock){
-    sdog.takeMutex();
-  }else{
-    sdog.giveMutex();
-  }
-#endif
-}
+
 //---------------------------------------------------------------------------------------------------------------------
 void Audio::loop(){
     // - localfile - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -647,7 +648,7 @@ void Audio::processLocalFile() {
            }
     }
     //----------------------------------------------------------------------------------------------------
-    cardLock(true); bytesAddedToBuffer = audiofile.read(InBuff.getWritePtr(), bytesCanBeWritten); cardLock(false);
+    bytesAddedToBuffer = audiofile.read(InBuff.getWritePtr(), bytesCanBeWritten);
     if(bytesAddedToBuffer > 0) {
         InBuff.bytesWritten(bytesAddedToBuffer);
     }
@@ -744,9 +745,7 @@ void Audio::processLocalFile() {
 
         f_stream = false;
         m_f_localfile = false;
-        cardLock(true);
         char *afn =strdup(audiofile.name()); // store temporary the name
-        cardLock(false);
         stopSong();
         sprintf(chbuf, "End of file \"%s\"", afn);
         if(audio_info) audio_info(chbuf);
@@ -1592,7 +1591,7 @@ uint32_t Audio::stop_mp3client(){
     uint32_t pos = 0;
     if(m_f_localfile){
         pos = getFilePos() - InBuff.bufferFilled();
-        cardLock(true); audiofile.close(); cardLock(false);
+        audiofile.close();
         m_f_localfile=false;
     }
     int v=read_register(SCI_VOL);
@@ -1675,16 +1674,26 @@ void Audio::setVUmeter() {
  *
  * \warning This feature is only available with patches that support VU meter.
  */
-void Audio::getVUlevel() {
+const uint8_t everyn = 4;
+void Audio::computeVUlevel() {
   if(!VS_PATCH_ENABLE) return;
-  if(!_vuInitalized) return;
+  static uint8_t cc = 0;
+  cc++;
+  if(!_vuInitalized || !config.store.vumeter || cc!=everyn) return;
+  if(cc==everyn) cc=0;
   int16_t reg = read_register(SCI_AICTRL3);
-  uint8_t rl = map((uint8_t)reg, 85, 92, 0, 255);
-  uint8_t rr = map((uint8_t)(reg >> 8), 85, 92, 0, 255);
-  //if(rl>30 || !isRunning()) vuLeft = rl;
-  //if(rr>30 || !isRunning()) vuRight = rr;
-  vuLeft = rl;
-  vuRight = rr;
+  vuLeft = map((uint8_t)(reg & 0x00FF), 85, 92, 0, 255);
+  vuRight = map((uint8_t)(reg >> 8), 85, 92, 0, 255);
+  if(vuLeft>config.vuThreshold) config.vuThreshold = vuLeft;
+  if(vuRight>config.vuThreshold) config.vuThreshold=vuRight;
+}
+
+uint16_t Audio::get_VUlevel(uint16_t dimension){
+  if(!VS_PATCH_ENABLE) return 0;
+  if(!_vuInitalized || !config.store.vumeter || config.vuThreshold==0) return 0;
+  uint8_t L = map(vuLeft, config.vuThreshold, 0, 0, dimension);
+  uint8_t R = map(vuRight, config.vuThreshold, 0, 0, dimension);
+  return (L << 8) | R;
 }
 //---------------------------------------------------------------------------------------------------------------------
 void Audio::setConnectionTimeout(uint16_t timeout_ms, uint16_t timeout_ms_ssl){
@@ -1934,7 +1943,6 @@ bool Audio::connecttoFS(fs::FS &fs, const char* path, uint32_t resumeFilePos) {
     sprintf(chbuf, "Reading file: \"%s\"", audioName);
     if(audio_info) {vTaskDelay(2); audio_info(chbuf);}
     if(audio_beginSDread) audio_beginSDread();
-    cardLock(true); 
     audiofile.close();
     if(fs.exists(audioName)) {
         audiofile = fs.open(audioName);
@@ -1947,7 +1955,6 @@ bool Audio::connecttoFS(fs::FS &fs, const char* path, uint32_t resumeFilePos) {
 
     if(!audiofile) {
         if(audio_info) {vTaskDelay(2); audio_info("Failed to open file for reading");}
-        cardLock(false);
         return false;
     }
 
@@ -1955,7 +1962,6 @@ bool Audio::connecttoFS(fs::FS &fs, const char* path, uint32_t resumeFilePos) {
     m_file_size = audiofile.size();//TEST loop
     
     char* afn = strdup(audiofile.name());                   // audioFileName
-    cardLock(false);
     uint8_t dotPos = lastIndexOf(afn, ".");
     for(uint8_t i = dotPos + 1; i < strlen(afn); i++){
         afn[i] = toLowerCase(afn[i]);
@@ -2006,7 +2012,7 @@ bool Audio::connecttoFS(fs::FS &fs, const char* path, uint32_t resumeFilePos) {
     sprintf(chbuf, "The %s format is not supported", afn + dotPos);
     if(audio_info) audio_info(chbuf);
     if(audio_error) audio_error(chbuf);
-    cardLock(true); audiofile.close(); cardLock(false);
+    audiofile.close();
     if(afn) free(afn);
     return false;
 }
@@ -2481,25 +2487,19 @@ void Audio::showID3Tag(const char* tag, const char* value){
 //---------------------------------------------------------------------------------------------------------------------
 uint32_t Audio::getFileSize(){
     if (!audiofile) return 0;
-    cardLock(true);
     uint32_t s = audiofile.size();
-    cardLock(false);
     return s;
 }
 //---------------------------------------------------------------------------------------------------------------------
 uint32_t Audio::getFilePos(){
     if (!audiofile) return 0;
-    cardLock(true);
     uint32_t p = audiofile.position();
-    cardLock(false);
     return p;
 }
 //---------------------------------------------------------------------------------------------------------------------
 bool Audio::setFilePos(uint32_t pos){
     if (!audiofile) return false;
-    cardLock(true);
     bool s = audiofile.seek(pos);
-    cardLock(false);
     return s;
 }
 uint32_t Audio::getAudioFileDuration(){
